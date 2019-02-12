@@ -156,12 +156,12 @@ function docker_build() {
 
   DOCKER_BUILD_PARAMS+=(--file "${DOCKER_FILE}" "${BUILD_CONTEXT}")
 
-  echo docker build "${DOCKER_BUILD_PARAMS[@]}"
+  docker build "${DOCKER_BUILD_PARAMS[@]}"
 }
 
 function docker_login() {
   if [[ ${REGISTRY_USER} && ${REGISTRY_PASS} ]]; then
-    echo docker login --username "${REGISTRY_USER}" \
+    docker login --username "${REGISTRY_USER}" \
                  --password "${REGISTRY_PASS}" "${REGISTRY}"
   fi
 }
@@ -169,16 +169,16 @@ function docker_login() {
 function docker_push() {
   local IMAGES=("$@")
   if [[ $(docker images -q "${REGISTRY}/${REPOSITORY}" | wc -l) -eq "${#IMAGES[@]}" ]]; then
-    echo docker push "${REGISTRY}/${REPOSITORY}"
+    docker push "${REGISTRY}/${REPOSITORY}"
   else
     for IMAGE in "${IMAGES[@]}"; do 
-      echo docker push "${IMAGE}"; 
+      docker push "${IMAGE}"; 
     done
   fi
 }
 
 function docker_rm_images() {
-  echo docker rmi "${IMAGES[@]}"
+  docker rmi "${IMAGES[@]}"
 }
 
 function usage() {
