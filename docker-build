@@ -138,7 +138,7 @@ function docker_build() {
   local DOCKER_BUILD_PARAMS=()
 
   if [[ ${PULL} = true ]]; then
-    DOCKER_BUILD_PARAMS=(--pull)
+    DOCKER_BUILD_PARAMS+=(--pull)
   fi
 
   if [[ ${PRUNE} = true ]]; then
@@ -205,12 +205,12 @@ Options:
                                    This can also be set using the environment variable LICENSE
       --maintainer <maintainer>    The image maintainer to be added as a label (defaults to the committer)
                                    This can also be set using the environment variable MAINTAINER
-      --no-push                    If the image should not be pushed.
                                    This can also be set using the environment variable NO_PUSH=true
   -p, --password <password>        The password for the registry
                                    This can also be set using the environment variable REGISTRY_PASS
       --prune                      If the build image should be removed afterwards
       --pull                       Should docker build pull images
+      --push                       If the images should be pushed
                                    This can also be set using the environment variable PRUNE=true
   -r, --repository <repository>    The repository name (defaults to the path of the git remote URL)
                                    This can also be set using the environment variable REPOSITORY
@@ -231,7 +231,7 @@ EOF
 }
 
 SHORT_OPTIONS="b:c:f:hlL:p:Pr:R:s:u:v:"
-LONG_OPTIONS="build-arg:,context:,file:,help,latest,latest-branch:,license:,maintainer:,password:,no-push,pull"
+LONG_OPTIONS="build-arg:,context:,file:,help,latest,latest-branch:,license:,maintainer:,password:,push,pull"
 LONG_OPTIONS="${LONG_OPTIONS},prune,repository:,registry:,suffix:,username:,url:,vendor:,version:"
 ! PARSED=$(getopt -o "${SHORT_OPTIONS}" -l ${LONG_OPTIONS} -n "$0" -- "$@")
 
@@ -252,10 +252,10 @@ while true; do
   -L|--latest-branch) LATEST_BRANCH="$2"; shift 2 ;;
      --license) LICENSE="$2"; shift 2 ;;
      --maintainer) MAINTAINER="$2"; shift 2 ;;
-     --no-push) NO_PUSH=true; shift; ;;
   -p|--password) REGISTRY_PASS="$2"; shift 2 ;;
      --prune) PRUNE=true; shift ;;
      --pull) PULL=true; shift;;
+     --push) PUSH=true; shift; ;;
   -r|--repository) REPOSITORY="$2"; shift 2 ;;
   -R|--registry) REGISTRY="$2"; shift 2 ;;
   -s|--suffix) TAG_SUFFIX="$2"; shift 2 ;;
@@ -281,7 +281,7 @@ DOCKER_FILE="${DOCKER_FILE:-Dockerfile}"
 BUILD_CONTEXT="${BUILD_CONTEXT:-.}"
 PRUNE="${PRUNE:-false}"
 VERSION="${VERSION:-}"
-NO_PUSH="${NO_PUSH:-false}"
+PUSH="${PUSH:-false}"
 PULL="${PULL:-false}"
 
 
@@ -322,10 +322,11 @@ for TAG in $(image_tags); do
   IMAGES+=("${REGISTRY}/${REPOSITORY}:${TAG}")
 done
 
-
 docker_login
+
 docker_build "${IMAGES[@]}"
-if [[ ! ${NO_PUSH} = true ]]; then
+
+if [[ ${PUSH} = true ]]; then
   docker_push "${IMAGES[@]}"
 fi
 
