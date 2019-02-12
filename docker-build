@@ -291,6 +291,14 @@ if ! git status >/dev/null 2>&1; then
   err_exit "${GIT_DIRECTORY} is not a git repository"
 fi
 
+if [[ ${BUILD_CONTEXT:0:1} != '/' ]]; then
+  BUILD_CONTEXT="$(readlink -f "${BUILD_CONTEXT}")"
+fi
+
+if [[ ${DOCKER_FILE:0:1} != '/' ]]; then
+  DOCKER_FILE="$(readlink -f "${BUILD_CONTEXT}/${DOCKER_FILE}")"
+fi
+
 # set the ${REPOSITORY} based on the git URL
 if [[ ! ${REPOSITORY} && ${GIT_REMOTE} ]]; then
   # extract only the path segments (minus .git)
