@@ -205,13 +205,14 @@ Options:
                                    This can also be set using the environment variable LICENSE
       --maintainer <maintainer>    The image maintainer to be added as a label (defaults to the committer)
                                    This can also be set using the environment variable MAINTAINER
-                                   This can also be set using the environment variable NO_PUSH=true
   -p, --password <password>        The password for the registry
                                    This can also be set using the environment variable REGISTRY_PASS
       --prune                      If the build image should be removed afterwards
-      --pull                       Should docker build pull images
-      --push                       If the images should be pushed
                                    This can also be set using the environment variable PRUNE=true
+      --pull                       Should docker build pull images (defaults to false)
+                                   This can also be set using the environment variable PULL=true
+      --push                       If the images should be pushed (defaults to false)
+                                   This can also be set using the environment variable PUSH=true
   -r, --repository <repository>    The repository name (defaults to the path of the git remote URL)
                                    This can also be set using the environment variable REPOSITORY
   -R, --registry <registry>        The registry to push to (defaults to docker.52north.org)
