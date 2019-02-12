@@ -1,0 +1,321 @@
+#!/bin/bash
+
+set -o errexit -o pipefail -o noclobber -o nounset
+shopt -s extglob
+
+function err_exit() { echo "$@" >&2; exit 1; }
+
+function get_version_part() {
+  local version="${1#v}"
+  local part="$2"
+  local versionAndLabel=(${version//-/ })
+  local versionParts=(${versionAndLabel[0]//./ })
+  if [[ "${part}" -ge "${#versionParts[@]}" ]]; then
+    echo 0
+  else
+    echo ${versionParts[$part]}
+  fi
+}
+
+function semver_label() {
+  local version=${1#v}
+  local versionAndLabel=(${version//-/ })
+  [[ "${#versionAndLabel[@]}" -lt 2 ]] \
+    && echo "" || echo ${versionAndLabel[1]}
+}
+
+function semver_major() { get_version_part "$1" 0; }
+function semver_minor() { get_version_part "$1" 1; }
+function semver_patch() { get_version_part "$1" 2; }
+function is_semver() { egrep -q '^v?[[:digit:]]+(\.[[:digit:]]+)*(-[[:alnum:]-]+(\.[[:alnum:]-]+)*)?$'<<<"$1"; }
+
+function git() { command git -C "${GIT_DIRECTORY}" "$@"; }
+function git_remote() {
+  local REMOTE="$(git for-each-ref --format='%(upstream:short)' "$(git symbolic-ref -q HEAD)" | cut -d '/' -f 1)"
+  echo "${REMOTE:-origin}"
+}
+function git_branch() { git symbolic-ref -q --short HEAD || true; }
+function git_tag() { git describe --tags --exact-match 2>/dev/null || true; }
+function git_commit() { git rev-parse -q --verify HEAD; }
+function git_commit_short() { git rev-parse -q --verify --short HEAD; }
+function git_remote_url() { git config --get "remote.$(git_remote).url"; }
+function git_committer() { git show -s --format='%an <%ae>'; }
+function git_repository_path() { grep -oiP '^(?:https?://)?.*?[:/]\K(?:.+(?=\.git$)|.+$)' <<<"${1}"; }
+
+function semver_image_tags() {
+  local VERSION="$1"
+  local SUFFIX="$2"
+  # do not create tags for pre-releases
+  if [[ $(semver_label ${VERSION}) ]]; then
+    echo ${VERSION}${SUFFIX}
+  else
+    local MAJOR=$(semver_major ${VERSION})
+    local MINOR=$(semver_minor ${VERSION})
+    local PATCH=$(semver_patch ${VERSION})
+    echo ${MAJOR}.${MINOR}.${PATCH}${SUFFIX}
+    echo ${MAJOR}.${MINOR}${SUFFIX}
+    echo ${MAJOR}${SUFFIX}
+  fi
+}
+
+function image_tags() {
+  local SUFFIX="${TAG_SUFFIX:+-$TAG_SUFFIX}"
+  local GIT_BRANCH="$(git_branch)"
+  local GIT_TAG="$(git_tag)"
+  local version
+
+  echo "$(git_commit)${SUFFIX}" 
+  echo "$(git_commit_short)${SUFFIX}"
+
+  if [[ ${LATEST} = true || (${LATEST_BRANCH} && ${LATEST_BRANCH} = ${GIT_BRANCH}) ]]; then
+    echo "${TAG_SUFFIX:-latest}"
+  fi
+
+  if [[ ${GIT_BRANCH} ]]; then
+    echo "${GIT_BRANCH//\//-}${SUFFIX}"
+  fi
+  
+  for version in "${GIT_TAG}" "${VERSION}"; do
+    if [[ ${version} ]]; then
+      # check if it is a semantic versioning tag
+      if is_semver "${version}"; then 
+        semver_image_tags "${version}" "${SUFFIX}"
+      else
+        echo "${version}${SUFFIX}"
+      fi
+    fi
+  done
+}
+
+function docker_build() {
+  local IMAGE LABEL BUILD_ARG
+  local GIT_TAG="$(git_tag)"
+  local GIT_REMOTE="$(git_remote_url)"
+  local GIT_COMMIT="$(git_commit)"
+  local BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  local LABELS=(
+    "org.label-schema.schema-version=1.0"
+    "org.label-schema.build-date=${BUILD_DATE}"
+  ) 
+
+  if [[ ${VENDOR} ]]; then
+    LABELS+=("org.label-schema.vendor=${VENDOR}")
+  fi
+  
+  if [[ ${LICENSE} ]]; then
+    LABELS+=("org.label-schema.license=${LICENSE}")
+  fi
+  
+  if [[ ${GIT_REMOTE} ]]; then
+    LABELS+=("org.label-schema.vcs-url=${GIT_REMOTE}")
+  fi
+
+  if [[ ${MAINTAINER} ]]; then
+    LABELS+=("maintainer=${MAINTAINER}")
+  else  
+    local GIT_COMMITTER="$(git_committer)"
+    if [[ ${GIT_COMMITTER} ]]; then
+      LABELS+=("maintainer=${GIT_COMMITTER}")
+    fi
+  fi
+
+  if [[ ${URL} ]]; then
+    LABELS+=("org.label-schema.url=${URL}")
+  elif [[ ${GIT_REMOTE} ]]; then
+    LABELS+=("org.label-schema.url=${GIT_REMOTE}")
+  fi
+
+  if [[ ${GIT_COMMIT} ]]; then
+    LABELS+=("org.label-schema.vcs-ref=${GIT_COMMIT}")
+  fi
+  
+  if [[ ${VERSION} ]]; then
+    LABELS+=("org.label-schema.version=${VERSION}")
+  elif [[ ${GIT_TAG} ]]; then
+    LABELS+=("org.label-schema.version=${GIT_TAG}")
+  fi
+  
+
+  local DOCKER_BUILD_PARAMS=(--pull)
+
+  if [[ ${PRUNE} = true ]]; then
+    DOCKER_BUILD_PARAMS+=(--force-rm --no-cache)
+  fi
+
+  for LABEL in "${LABELS[@]}"; do
+    DOCKER_BUILD_PARAMS+=(--label "${LABEL}")
+  done
+
+  for IMAGE in "$@"; do
+    DOCKER_BUILD_PARAMS+=(--tag "${IMAGE}")
+  done
+
+  for BUILD_ARG in "${BUILD_ARGS[@]}"; do
+    DOCKER_BUILD_PARAMS+=(--build-arg "${BUILD_ARG}")
+  done
+
+  DOCKER_BUILD_PARAMS+=(--file "${DOCKER_FILE}" "${BUILD_CONTEXT}")
+
+  echo docker build "${DOCKER_BUILD_PARAMS[@]}"
+}
+
+function docker_login() {
+  if [[ ${REGISTRY_USER} && ${REGISTRY_PASS} ]]; then
+    echo docker login --username "${REGISTRY_USER}" \
+                 --password "${REGISTRY_PASS}" "${REGISTRY}"
+  fi
+}
+
+function docker_push() {
+  local IMAGES=("$@")
+  if [[ $(docker images -q "${REGISTRY}/${REPOSITORY}" | wc -l) -eq "${#IMAGES[@]}" ]]; then
+    echo docker push "${REGISTRY}/${REPOSITORY}"
+  else
+    for IMAGE in "${IMAGES[@]}"; do 
+      echo docker push "${IMAGE}"; 
+    done
+  fi
+}
+
+function docker_rm_images() {
+  echo docker rmi "${IMAGES[@]}"
+}
+
+function usage() {
+  cat <<EOF
+Usage: $0 [options] <path>
+
+Parameters: 
+  path                             The path to the git repository (defaults to the current working directory)
+
+Options:
+  -b, --build-arg <build-arg>      Additional build arguments (may occur multiple times).
+  -c, --context <build-context>    The build context (defaults to .)
+                                   This can also be set using the environment variable BUILD_CONTEXT
+  -f, --file <path-to-Dockerfile>  The path to the Dockerfile (defaults to Dockerfile)
+                                   This can also be set using the environment variable DOCKER_FILE
+  -l, --latest                     If this image should be tagged as 'latest'
+                                   This can also be set using the environment variable LATEST=true
+  -L, --latest-branch <branch>     If the specified branch is build the image will be tagged as 'latest'
+                                   This can also be set using the environment variable LATEST_BRANCH
+      --license                    The license of this image.
+                                   This can also be set using the environment variable LICENSE
+      --maintainer <maintainer>    The image maintainer to be added as a label (defaults to the committer)
+                                   This can also be set using the environment variable MAINTAINER
+      --no-push                    If the image should not be pushed.
+                                   This can also be set using the environment variable NO_PUSH=true
+  -p, --password <password>        The password for the registry
+                                   This can also be set using the environment variable REGISTRY_PASS
+  -P, --prune                      If the build image should be removed afterwards
+                                   This can also be set using the environment variable PRUNE=true
+  -r, --repository <repository>    The repository name (defaults to the path of the git remote URL)
+                                   This can also be set using the environment variable REPOSITORY
+  -R, --registry <registry>        The registry to push to (defaults to docker.52north.org)
+                                   This can also be set using the environment variable REGISTRY
+  -s, --suffix <suffix>            The suffix to apply to the generated image tags (e.g. 'alpine')
+                                   This can also be set using the environment variable TAG_SUFFIX
+  -u, --username <username>        The username for the registry
+                                   This can also be set using the environment variable REGISTRY_USER
+      --url <url>                  The project URL to be added as a image label (defaults to the git remote URL)
+                                   This can also be set using the environment variable URL
+  -v, --version <version>          The version to use for this image (in addition to any git tag)
+                                   This can also be set using the environment variable VERSION
+      --vendor <vendor>            The vendor to be added as a image label (defaults to 52°North GmbH)
+                                   This can also be set using the environment variable VENDOR
+  -h, --help                       Output usage information
+EOF
+}
+
+SHORT_OPTIONS="b:c:f:hlL:p:Pr:R:s:u:v:"
+LONG_OPTIONS="build-arg:,context:,file:,help,latest,latest-branch:,license:,maintainer:,password:,no-push"
+LONG_OPTIONS="${LONG_OPTIONS},prune,repository:,registry:,suffix:,username:,url:,vendor:,version:"
+! PARSED=$(getopt -o "${SHORT_OPTIONS}" -l ${LONG_OPTIONS} -n "$0" -- "$@")
+
+if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+    usage >&2; exit 1
+fi
+eval set -- "$PARSED"
+
+BUILD_ARGS=()
+
+while true; do
+  case "$1" in
+  -b|--build-arg) BUILD_ARGS+=("$2"); shift 2 ;;
+  -c|--context) BUILD_CONTEXT="$2"; shift 2 ;;
+  -f|--file) DOCKER_FILE="$2"; shift 2 ;;
+  -h|--help) usage; exit 0 ;;
+  -l|--latest) LATEST=true; shift ;;
+  -L|--latest-branch) LATEST_BRANCH="$2"; shift 2 ;;
+     --license) LICENSE="$2"; shift 2 ;;
+     --maintainer) MAINTAINER="$2"; shift 2 ;;
+     --no-push) NO_PUSH=true; shift; ;;
+  -p|--password) REGISTRY_PASS="$2"; shift 2 ;;
+  -P|--prune) PRUNE=true; shift ;;
+  -r|--repository) REPOSITORY="$2"; shift 2 ;;
+  -R|--registry) REGISTRY="$2"; shift 2 ;;
+  -s|--suffix) TAG_SUFFIX="$2"; shift 2 ;;
+  -u|--username) REGISTRY_USER="$2"; shift 2 ;;
+     --url) URL="$2"; shift 2 ;;
+     --vendor) VENDOR="$2"; shift 2 ;;
+  -v|--version) VERSION="$2"; shift 2 ;;
+  --) shift; break ;;
+  *) exit 1 ;;
+  esac
+done
+
+VENDOR="${VENDOR:-52°North GmbH}"
+LICENSE="${LICENSE:-}"
+TAG_SUFFIX="${TAG_SUFFIX:-}"
+REPOSITORY="${REPOSITORY:-}"
+REGISTRY_USER="${REGISTRY_USER:-}"
+REGISTRY_PASS="${REGISTRY_PASS:-}"
+LATEST="${LATEST:-false}"
+LATEST_BRANCH="${LATEST_BRANCH:-}"
+REGISTRY="${REGISTRY:-docker.52north.org}"
+DOCKER_FILE="${DOCKER_FILE:-Dockerfile}"
+BUILD_CONTEXT="${BUILD_CONTEXT:-.}"
+PRUNE="${PRUNE:-false}"
+VERSION="${VERSION:-}"
+NO_PUSH="${NO_PUSH:-false}"
+
+
+GIT_DIRECTORY="${1:-$(pwd)}"
+GIT_REMOTE="$(git_remote_url)"
+
+
+if [[ ! -d ${GIT_DIRECTORY} ]]; then
+  err_exit "Could not find ${GIT_DIRECTORY}"
+fi
+
+if ! git status >/dev/null 2>&1; then
+  err_exit "${GIT_DIRECTORY} is not a git repository"
+fi
+
+# set the ${REPOSITORY} based on the git URL
+if [[ ! ${REPOSITORY} && ${GIT_REMOTE} ]]; then
+  # extract only the path segments (minus .git)
+  REPOSITORY="$(git_repository_path ${GIT_REMOTE})"
+  # only lower case is allowed
+  REPOSITORY="${REPOSITORY,,}"
+fi
+
+if [[ ! ${REPOSITORY} ]]; then
+  err_exit "Could not determine repository name"
+fi
+
+IMAGES=()
+for TAG in $(image_tags); do
+  IMAGES+=("${REGISTRY}/${REPOSITORY}:${TAG}")
+done
+
+
+docker_login
+docker_build "${IMAGES[@]}"
+if [[ ! ${NO_PUSH} = true ]]; then
+  docker_push "${IMAGES[@]}"
+fi
+
+if [[ ${PRUNE} = true ]]; then
+  docker_rm_images "${IMAGES[@]}"
+fi
+
