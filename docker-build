@@ -73,10 +73,10 @@ function image_tags() {
     echo "${TAG_SUFFIX:-latest}"
   fi
 
-  if [[ ${GIT_BRANCH} ]]; then
+  if [[ ${NO_BRANCH} != true && ${GIT_BRANCH} ]]; then
     echo "${GIT_BRANCH//\//-}${SUFFIX}"
   fi
-  
+
   for version in "${GIT_TAG}" "${VERSION}"; do
     if [[ ${version} ]]; then
       # check if it is a semantic versioning tag
@@ -218,6 +218,8 @@ Options:
       --version-level <level>      The level of the version up to which tags should be generated. One
                                    of major, minor or patch (defaults to patch)
                                    This can also be set using the environment variable VERSION_LEVEL
+      --no-branch                  Do not create a tag named after the branch.
+                                   This can also be set using the environment variable NO_BRANCH=true
   -r, --repository <repository>    The repository name (defaults to the path of the git remote URL)
                                    This can also be set using the environment variable REPOSITORY
   -R, --registry <registry>        The registry to push to (defaults to docker.52north.org)
@@ -238,7 +240,7 @@ EOF
 
 SHORT_OPTIONS="b:c:f:hlL:p:Pr:R:s:u:v:"
 LONG_OPTIONS="build-arg:,context:,file:,help,latest,latest-branch:,license:,maintainer:,password:,push,pull"
-LONG_OPTIONS="${LONG_OPTIONS},prune,repository:,registry:,suffix:,username:,url:,vendor:,version:,version-level:"
+LONG_OPTIONS="${LONG_OPTIONS},prune,repository:,registry:,suffix:,username:,url:,vendor:,version:,version-level:,no-branch"
 ! PARSED=$(getopt -o "${SHORT_OPTIONS}" -l ${LONG_OPTIONS} -n "$0" -- "$@")
 
 if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
@@ -263,6 +265,7 @@ while true; do
      --pull) PULL=true; shift;;
      --push) PUSH=true; shift; ;;
      --version-level) VERSION_LEVEL="$2"; shift 2; ;;
+     --no-branch) NO_BRANCH=true; shift; ;;
   -r|--repository) REPOSITORY="$2"; shift 2 ;;
   -R|--registry) REGISTRY="$2"; shift 2 ;;
   -s|--suffix) TAG_SUFFIX="$2"; shift 2 ;;
@@ -293,6 +296,7 @@ VERSION="${VERSION:-}"
 PUSH="${PUSH:-false}"
 PULL="${PULL:-false}"
 VERSION_LEVEL="${VERSION_LEVEL:-patch}"
+NO_BRANCH="${NO_BRANCH:-false}"
 
 case "${VERSION_LEVEL}" in
   major|minor|patch) ;;
