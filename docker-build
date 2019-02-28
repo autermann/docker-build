@@ -66,8 +66,10 @@ function image_tags() {
   local GIT_TAG="$(git_tag)"
   local version
 
-  echo "$(git_commit)${SUFFIX}" 
-  echo "$(git_commit_short)${SUFFIX}"
+  if [[ ${NO_COMMIT} != true ]]; then
+    echo "$(git_commit)${SUFFIX}"
+    echo "$(git_commit_short)${SUFFIX}"
+  fi
 
   if [[ ${LATEST} = true || (${LATEST_BRANCH} && ${LATEST_BRANCH} = ${GIT_BRANCH}) ]]; then
     echo "${TAG_SUFFIX:-latest}"
@@ -80,7 +82,7 @@ function image_tags() {
   for version in "${GIT_TAG}" "${VERSION}"; do
     if [[ ${version} ]]; then
       # check if it is a semantic versioning tag
-      if is_semver "${version}"; then 
+      if is_semver "${version}"; then
         semver_image_tags "${version}" "${SUFFIX}"
       else
         echo "${version}${SUFFIX}"
@@ -98,23 +100,23 @@ function docker_build() {
   local LABELS=(
     "org.label-schema.schema-version=1.0"
     "org.label-schema.build-date=${BUILD_DATE}"
-  ) 
+  )
 
   if [[ ${VENDOR} ]]; then
     LABELS+=("org.label-schema.vendor=${VENDOR}")
   fi
-  
+
   if [[ ${LICENSE} ]]; then
     LABELS+=("org.label-schema.license=${LICENSE}")
   fi
-  
+
   if [[ ${GIT_REMOTE} ]]; then
     LABELS+=("org.label-schema.vcs-url=${GIT_REMOTE}")
   fi
 
   if [[ ${MAINTAINER} ]]; then
     LABELS+=("maintainer=${MAINTAINER}")
-  else  
+  else
     local GIT_COMMITTER="$(git_committer)"
     if [[ ${GIT_COMMITTER} ]]; then
       LABELS+=("maintainer=${GIT_COMMITTER}")
@@ -130,13 +132,13 @@ function docker_build() {
   if [[ ${GIT_COMMIT} ]]; then
     LABELS+=("org.label-schema.vcs-ref=${GIT_COMMIT}")
   fi
-  
+
   if [[ ${VERSION} ]]; then
     LABELS+=("org.label-schema.version=${VERSION}")
   elif [[ ${GIT_TAG} ]]; then
     LABELS+=("org.label-schema.version=${GIT_TAG}")
   fi
-  
+
   local DOCKER_BUILD_PARAMS=()
 
   if [[ ${PULL} = true ]]; then
@@ -176,8 +178,8 @@ function docker_push() {
   if [[ $(docker images -q "${REGISTRY}/${REPOSITORY}" | wc -l) -eq "${#IMAGES[@]}" ]]; then
     docker push "${REGISTRY}/${REPOSITORY}"
   else
-    for IMAGE in "${IMAGES[@]}"; do 
-      docker push "${IMAGE}"; 
+    for IMAGE in "${IMAGES[@]}"; do
+      docker push "${IMAGE}";
     done
   fi
 }
@@ -190,7 +192,7 @@ function usage() {
   cat <<EOF
 Usage: $0 [options] <path>
 
-Parameters: 
+Parameters:
   path                             The path to the git repository (defaults to the current working directory)
 
 Options:
@@ -218,6 +220,8 @@ Options:
       --version-level <level>      The level of the version up to which tags should be generated. One
                                    of major, minor or patch (defaults to patch)
                                    This can also be set using the environment variable VERSION_LEVEL
+      --no-commit                  Do not create tags for the Git commit
+                                   This can also be set using the environment variable NO_COMMIT=true
       --no-branch                  Do not create a tag named after the branch.
                                    This can also be set using the environment variable NO_BRANCH=true
   -r, --repository <repository>    The repository name (defaults to the path of the git remote URL)
@@ -240,7 +244,7 @@ EOF
 
 SHORT_OPTIONS="b:c:f:hlL:p:Pr:R:s:u:v:"
 LONG_OPTIONS="build-arg:,context:,file:,help,latest,latest-branch:,license:,maintainer:,password:,push,pull"
-LONG_OPTIONS="${LONG_OPTIONS},prune,repository:,registry:,suffix:,username:,url:,vendor:,version:,version-level:,no-branch"
+LONG_OPTIONS="${LONG_OPTIONS},prune,repository:,registry:,suffix:,username:,url:,vendor:,version:,version-level:,no-branch,no-commit"
 ! PARSED=$(getopt -o "${SHORT_OPTIONS}" -l ${LONG_OPTIONS} -n "$0" -- "$@")
 
 if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
@@ -264,6 +268,7 @@ while true; do
      --prune) PRUNE=true; shift ;;
      --pull) PULL=true; shift;;
      --push) PUSH=true; shift; ;;
+     --no-commit) NO_COMMIT=true; shift; ;;
      --version-level) VERSION_LEVEL="$2"; shift 2; ;;
      --no-branch) NO_BRANCH=true; shift; ;;
   -r|--repository) REPOSITORY="$2"; shift 2 ;;
@@ -295,12 +300,13 @@ PRUNE="${PRUNE:-false}"
 VERSION="${VERSION:-}"
 PUSH="${PUSH:-false}"
 PULL="${PULL:-false}"
+NO_COMMIT="${NO_COMMIT:-false}"
 VERSION_LEVEL="${VERSION_LEVEL:-patch}"
 NO_BRANCH="${NO_BRANCH:-false}"
 
 case "${VERSION_LEVEL}" in
   major|minor|patch) ;;
-  *) usage >&2; exit 1 ;;
+  *) err_exit "Invalid version level" ;;
 esac
 
 
@@ -341,6 +347,10 @@ IMAGES=()
 for TAG in $(image_tags); do
   IMAGES+=("${REGISTRY}/${REPOSITORY}:${TAG}")
 done
+
+if [[ "${#IMAGES[@]}" -eq 0 ]]; then
+  err_exit "No image name given"
+fi
 
 docker_login
 
