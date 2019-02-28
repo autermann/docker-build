@@ -38,7 +38,7 @@ function git_branch() { git symbolic-ref -q --short HEAD || true; }
 function git_tag() { git describe --tags --exact-match 2>/dev/null || true; }
 function git_commit() { git rev-parse -q --verify HEAD; }
 function git_commit_short() { git rev-parse -q --verify --short HEAD; }
-function git_remote_url() { git config --get "remote.$(git_remote).url"; }
+function git_remote_url() { git config --get "remote.$(git_remote).url" || true; }
 function git_committer() { git show -s --format='%an <%ae>'; }
 function git_repository_path() { grep -oiP '^(?:https?://)?.*?[:/]\K(?:.+(?=\.git$)|.+$)' <<<"${1}"; }
 
