@@ -52,9 +52,11 @@ function semver_image_tags() {
     local MAJOR=$(semver_major ${VERSION})
     local MINOR=$(semver_minor ${VERSION})
     local PATCH=$(semver_patch ${VERSION})
-    echo ${MAJOR}.${MINOR}.${PATCH}${SUFFIX}
-    echo ${MAJOR}.${MINOR}${SUFFIX}
-    echo ${MAJOR}${SUFFIX}
+    case "${VERSION_LEVEL}" in
+      patch) echo ${MAJOR}.${MINOR}.${PATCH}${SUFFIX} ;&
+      minor) echo ${MAJOR}.${MINOR}${SUFFIX}          ;&
+      major) echo ${MAJOR}${SUFFIX}                   ;;
+    esac
   fi
 }
 
@@ -213,6 +215,9 @@ Options:
                                    This can also be set using the environment variable PULL=true
       --push                       If the images should be pushed (defaults to false)
                                    This can also be set using the environment variable PUSH=true
+      --version-level <level>      The level of the version up to which tags should be generated. One
+                                   of major, minor or patch (defaults to patch)
+                                   This can also be set using the environment variable VERSION_LEVEL
   -r, --repository <repository>    The repository name (defaults to the path of the git remote URL)
                                    This can also be set using the environment variable REPOSITORY
   -R, --registry <registry>        The registry to push to (defaults to docker.52north.org)
@@ -233,7 +238,7 @@ EOF
 
 SHORT_OPTIONS="b:c:f:hlL:p:Pr:R:s:u:v:"
 LONG_OPTIONS="build-arg:,context:,file:,help,latest,latest-branch:,license:,maintainer:,password:,push,pull"
-LONG_OPTIONS="${LONG_OPTIONS},prune,repository:,registry:,suffix:,username:,url:,vendor:,version:"
+LONG_OPTIONS="${LONG_OPTIONS},prune,repository:,registry:,suffix:,username:,url:,vendor:,version:,version-level:"
 ! PARSED=$(getopt -o "${SHORT_OPTIONS}" -l ${LONG_OPTIONS} -n "$0" -- "$@")
 
 if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
@@ -257,6 +262,7 @@ while true; do
      --prune) PRUNE=true; shift ;;
      --pull) PULL=true; shift;;
      --push) PUSH=true; shift; ;;
+     --version-level) VERSION_LEVEL="$2"; shift 2; ;;
   -r|--repository) REPOSITORY="$2"; shift 2 ;;
   -R|--registry) REGISTRY="$2"; shift 2 ;;
   -s|--suffix) TAG_SUFFIX="$2"; shift 2 ;;
@@ -286,6 +292,13 @@ PRUNE="${PRUNE:-false}"
 VERSION="${VERSION:-}"
 PUSH="${PUSH:-false}"
 PULL="${PULL:-false}"
+VERSION_LEVEL="${VERSION_LEVEL:-patch}"
+
+case "${VERSION_LEVEL}" in
+  major|minor|patch) ;;
+  *) usage >&2; exit 1 ;;
+esac
+
 
 
 GIT_DIRECTORY="${1:-$(pwd)}"
